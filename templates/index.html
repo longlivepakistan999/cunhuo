@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>资产存活探测</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                   "Microsoft YaHei", sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 32px;
+      width: 100%;
+      max-width: 560px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.4);
+    }
+    h1 { margin: 0 0 4px; font-size: 22px; }
+    .sub { color: #94a3b8; font-size: 13px; margin-bottom: 24px; }
+    label { display: block; font-size: 13px; color: #cbd5e1; margin-bottom: 6px; }
+    input[type=file], input[type=number] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 14px;
+    }
+    .row { display: flex; gap: 12px; margin-bottom: 16px; }
+    .row > div { flex: 1; }
+    button {
+      width: 100%;
+      padding: 12px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    button:hover:not(:disabled) { background: #1d4ed8; }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    .progress-wrap { margin-top: 24px; display: none; }
+    .progress-wrap.active { display: block; }
+    .bar {
+      width: 100%;
+      height: 12px;
+      background: #0f172a;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid #334155;
+    }
+    .bar > div {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #22d3ee);
+      width: 0%;
+      transition: width .3s;
+    }
+    .stats {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 10px;
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    .stats b { color: #e2e8f0; font-weight: 600; }
+    .alive-c { color: #4ade80; }
+    .dead-c { color: #f87171; }
+    .downloads { margin-top: 20px; display: none; gap: 12px; }
+    .downloads.active { display: flex; }
+    .downloads a {
+      flex: 1;
+      text-align: center;
+      padding: 10px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .dl-alive { background: #166534; color: #dcfce7; }
+    .dl-dead { background: #7f1d1d; color: #fee2e2; }
+    .dl-alive:hover { background: #15803d; }
+    .dl-dead:hover { background: #991b1b; }
+    .err {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #7f1d1d;
+      color: #fee2e2;
+      font-size: 13px;
+      display: none;
+    }
+    .err.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>资产存活探测</h1>
+    <div class="sub">上传一个 txt 文件（每行一个域名/URL），后台跑完后下载结果。</div>
+
+    <form id="f">
+      <div class="row">
+        <div>
+          <label>域名文件 (.txt)</label>
+          <input type="file" id="file" name="file" accept=".txt,text/plain" required>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>线程数 (1-200)</label>
+          <input type="number" id="threads" name="threads" value="30" min="1" max="200">
+        </div>
+      </div>
+      <button type="submit" id="btn">开始探测</button>
+    </form>
+
+    <div class="err" id="err"></div>
+
+    <div class="progress-wrap" id="prog">
+      <div class="bar"><div id="fill"></div></div>
+      <div class="stats">
+        <span>进度 <b id="pct">0%</b> (<span id="done">0</span>/<span id="total">0</span>)</span>
+        <span>存活 <b class="alive-c" id="alive">0</b> · 失败 <b class="dead-c" id="dead">0</b></span>
+      </div>
+      <div class="downloads" id="dl">
+        <a class="dl-alive" id="dl-alive" href="#" download>下载 alive.csv</a>
+        <a class="dl-dead" id="dl-dead" href="#" download>下载 dead.csv</a>
+      </div>
+    </div>
+  </div>
+
+<script>
+const form = document.getElementById('f');
+const btn = document.getElementById('btn');
+const err = document.getElementById('err');
+const prog = document.getElementById('prog');
+const fill = document.getElementById('fill');
+const dl = document.getElementById('dl');
+
+function showErr(msg) {
+  err.textContent = msg;
+  err.classList.add('active');
+}
+function clearErr() {
+  err.classList.remove('active');
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  clearErr();
+  dl.classList.remove('active');
+  prog.classList.remove('active');
+
+  const fd = new FormData(form);
+  btn.disabled = true;
+  btn.textContent = '上传中...';
+
+  try {
+    const r = await fetch('/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (!r.ok) {
+      showErr(data.error || '上传失败');
+      btn.disabled = false;
+      btn.textContent = '开始探测';
+      return;
+    }
+    btn.textContent = '探测中...';
+    document.getElementById('total').textContent = data.total;
+    prog.classList.add('active');
+    pollStatus(data.job_id);
+  } catch (e) {
+    showErr('网络错误: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '开始探测';
+  }
+});
+
+async function pollStatus(jobId) {
+  try {
+    const r = await fetch('/status/' + jobId);
+    const s = await r.json();
+    if (!r.ok) {
+      showErr(s.error || '获取状态失败');
+      btn.disabled = false;
+      btn.textContent = '开始探测';
+      return;
+    }
+
+    const total = s.total || 1;
+    const pct = Math.floor((s.done / total) * 100);
+    fill.style.width = pct + '%';
+    document.getElementById('pct').textContent = pct + '%';
+    document.getElementById('done').textContent = s.done;
+    document.getElementById('alive').textContent = s.alive;
+    document.getElementById('dead').textContent = s.dead;
+
+    if (s.status === 'finished') {
+      document.getElementById('dl-alive').href = '/download/' + jobId + '/alive';
+      document.getElementById('dl-dead').href = '/download/' + jobId + '/dead';
+      dl.classList.add('active');
+      btn.disabled = false;
+      btn.textContent = '开始探测';
+      return;
+    }
+    if (s.status === 'error') {
+      showErr('任务出错: ' + (s.error || '未知错误'));
+      btn.disabled = false;
+      btn.textContent = '开始探测';
+      return;
+    }
+    setTimeout(() => pollStatus(jobId), 800);
+  } catch (e) {
+    showErr('网络错误: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '开始探测';
+  }
+}
+</script>
+</body>
+</html>

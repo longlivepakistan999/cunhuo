@@ -15,31 +15,16 @@
       min-height: 100vh;
       padding: 32px 16px;
     }
-    .wrap { max-width: 920px; margin: 0 auto; }
-    .card {
-      background: #1e293b;
-      border-radius: 12px;
-      padding: 28px;
-      box-shadow: 0 20px 50px rgba(0,0,0,.4);
-      margin-bottom: 24px;
+    .wrap { max-width: 960px; margin: 0 auto; }
+    .head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px;
     }
-    h1 { margin: 0 0 4px; font-size: 22px; }
-    h2 { margin: 0 0 16px; font-size: 16px; color: #cbd5e1; }
-    .sub { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
-    label { display: block; font-size: 13px; color: #cbd5e1; margin-bottom: 6px; }
-    input[type=file], input[type=number] {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #334155;
-      background: #0f172a;
-      color: #e2e8f0;
-      font-size: 14px;
-    }
-    .row { display: flex; gap: 12px; margin-bottom: 16px; }
-    .row > div { flex: 1; }
-    button {
-      padding: 10px 16px;
+    h1 { margin: 0; font-size: 22px; }
+    .sub { color: #94a3b8; font-size: 13px; }
+
+    .btn {
+      padding: 8px 14px;
       background: #2563eb;
       color: #fff;
       border: none;
@@ -48,36 +33,37 @@
       cursor: pointer;
       font-weight: 500;
     }
-    button.full { width: 100%; padding: 12px; font-size: 15px; }
-    button:hover:not(:disabled) { background: #1d4ed8; }
-    button:disabled { background: #475569; cursor: not-allowed; }
-    .progress-wrap { margin-top: 24px; display: none; }
-    .progress-wrap.active { display: block; }
-    .bar {
-      width: 100%; height: 12px;
-      background: #0f172a;
-      border-radius: 6px;
-      overflow: hidden;
+    .btn:hover:not(:disabled) { background: #1d4ed8; }
+    .btn:disabled { background: #475569; cursor: not-allowed; }
+    .btn.ghost { background: #334155; color: #cbd5e1; }
+    .btn.ghost:hover:not(:disabled) { background: #475569; }
+
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 22px;
+      box-shadow: 0 20px 50px rgba(0,0,0,.4);
+      margin-bottom: 20px;
+    }
+
+    .form { display: none; }
+    .form.active { display: block; }
+    label { display: block; font-size: 13px; color: #cbd5e1; margin-bottom: 6px; }
+    input[type=text], input[type=file], input[type=number] {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
       border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 14px;
     }
-    .bar > div {
-      height: 100%;
-      background: linear-gradient(90deg, #3b82f6, #22d3ee);
-      width: 0%;
-      transition: width .3s;
-    }
-    .stats {
-      display: flex;
-      justify-content: space-between;
-      margin-top: 10px;
-      font-size: 13px;
-      color: #94a3b8;
-    }
-    .stats b { color: #e2e8f0; font-weight: 600; }
-    .alive-c { color: #4ade80; }
-    .dead-c { color: #f87171; }
+    .row { display: flex; gap: 12px; margin-bottom: 14px; }
+    .row > div { flex: 1; }
+    .form-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
     .err {
-      margin-top: 14px;
+      margin-top: 12px;
       padding: 10px 12px;
       border-radius: 8px;
       background: #7f1d1d;
@@ -86,97 +72,157 @@
       display: none;
     }
     .err.active { display: block; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td {
-      padding: 10px 8px;
-      text-align: left;
-      border-bottom: 1px solid #334155;
-      vertical-align: middle;
+
+    .task {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+      border-left: 3px solid #475569;
     }
-    th { color: #94a3b8; font-weight: 500; font-size: 12px; }
+    .task.running { border-left-color: #3b82f6; }
+    .task.queued { border-left-color: #f59e0b; }
+    .task.finished { border-left-color: #22c55e; }
+    .task.error { border-left-color: #ef4444; }
+    .task.cancelled, .task.interrupted { border-left-color: #94a3b8; }
+
+    .task-top {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; flex-wrap: wrap;
+    }
+    .task-name {
+      font-size: 15px; font-weight: 600; color: #e2e8f0;
+      max-width: 100%;
+      word-break: break-all;
+    }
+    .task-meta { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+    .task-meta .filename { color: #cbd5e1; }
+
     .badge {
       display: inline-block;
       padding: 2px 8px;
       border-radius: 4px;
       font-size: 11px;
       font-weight: 500;
+      margin-right: 6px;
     }
     .b-running { background: #1e40af; color: #dbeafe; }
+    .b-queued { background: #78350f; color: #fef3c7; }
     .b-finished { background: #166534; color: #dcfce7; }
     .b-error { background: #7f1d1d; color: #fee2e2; }
-    .b-interrupted { background: #78350f; color: #fef3c7; }
-    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .b-cancelled, .b-interrupted { background: #475569; color: #e2e8f0; }
+
+    .task-body { margin-top: 10px; display: flex; gap: 16px; flex-wrap: wrap;
+                 align-items: center; }
+    .stat { font-size: 13px; color: #94a3b8; }
+    .stat b { color: #e2e8f0; }
+    .alive-c { color: #4ade80 !important; }
+    .dead-c { color: #f87171 !important; }
+
+    .progress {
+      flex: 1; min-width: 180px;
+      height: 8px; background: #0f172a;
+      border-radius: 4px; overflow: hidden; border: 1px solid #334155;
+    }
+    .progress > div {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #22d3ee);
+      width: 0%; transition: width .3s;
+    }
+
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
     .actions a, .actions button {
-      padding: 4px 10px;
+      padding: 5px 12px;
       font-size: 12px;
       border-radius: 4px;
       text-decoration: none;
       border: none;
       cursor: pointer;
+      font-weight: 500;
     }
+    .a-up { background: #1e40af; color: #dbeafe; }
+    .a-up:hover:not(:disabled) { background: #1d4ed8; }
+    .a-cancel { background: #78350f; color: #fef3c7; }
+    .a-cancel:hover:not(:disabled) { background: #92400e; }
     .a-alive { background: #166534; color: #dcfce7; }
+    .a-alive:hover { background: #15803d; }
     .a-dead { background: #7f1d1d; color: #fee2e2; }
+    .a-dead:hover { background: #991b1b; }
     .a-del { background: #475569; color: #e2e8f0; }
     .a-del:hover { background: #ef4444; }
-    .empty { color: #64748b; text-align: center; padding: 24px; font-size: 13px; }
-    .filename { color: #cbd5e1; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .head-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .refresh { background: #334155; color: #cbd5e1; padding: 6px 12px; font-size: 12px; }
-    .refresh:hover:not(:disabled) { background: #475569; }
+    .actions button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .empty {
+      background: #1e293b; border-radius: 12px; padding: 40px;
+      text-align: center; color: #64748b; font-size: 14px;
+    }
+
+    .err-msg {
+      margin-top: 8px; padding: 6px 10px;
+      background: #7f1d1d; color: #fee2e2;
+      border-radius: 4px; font-size: 12px;
+    }
   </style>
 </head>
 <body>
 <div class="wrap">
 
-  <div class="card">
-    <h1>资产存活探测</h1>
-    <div class="sub">上传一个 txt 文件（每行一个域名/URL），后台跑完后下载结果。</div>
+  <div class="head">
+    <div>
+      <h1>资产存活探测</h1>
+      <div class="sub">同时只跑一个任务,其它排队;支持提前/终止/删除。</div>
+    </div>
+    <button class="btn" id="new-btn" type="button">+ 新建任务</button>
+  </div>
 
+  <div class="card form" id="form-card">
     <form id="f">
       <div class="row">
         <div>
-          <label>域名文件 (.txt)</label>
-          <input type="file" id="file" name="file" accept=".txt,text/plain" required>
+          <label>任务名称</label>
+          <input type="text" id="name" name="name" placeholder="例如：某客户外网资产-2024Q1" required>
         </div>
-        <div style="max-width: 160px;">
+        <div style="max-width: 140px;">
           <label>线程数</label>
           <input type="number" id="threads" name="threads" value="30" min="1" max="200">
         </div>
       </div>
-      <button type="submit" id="btn" class="full">开始探测</button>
-    </form>
-
-    <div class="err" id="err"></div>
-
-    <div class="progress-wrap" id="prog">
-      <div class="bar"><div id="fill"></div></div>
-      <div class="stats">
-        <span>进度 <b id="pct">0%</b> (<span id="done">0</span>/<span id="total">0</span>)</span>
-        <span>存活 <b class="alive-c" id="alive">0</b> · 失败 <b class="dead-c" id="dead">0</b></span>
+      <div class="row">
+        <div>
+          <label>域名文件 (.txt,每行一个)</label>
+          <input type="file" id="file" name="file" accept=".txt,text/plain" required>
+        </div>
       </div>
-    </div>
+      <div class="form-actions">
+        <button type="button" class="btn ghost" id="cancel-new">取消</button>
+        <button type="submit" class="btn" id="submit-btn">加入队列</button>
+      </div>
+      <div class="err" id="err"></div>
+    </form>
   </div>
 
-  <div class="card">
-    <div class="head-row">
-      <h2 style="margin:0;">历史任务</h2>
-      <button class="refresh" id="refresh" type="button">刷新</button>
-    </div>
-    <div id="history"></div>
-  </div>
-
+  <div id="list"></div>
 </div>
 
 <script>
+const formCard = document.getElementById('form-card');
 const form = document.getElementById('f');
-const btn = document.getElementById('btn');
+const newBtn = document.getElementById('new-btn');
+const cancelNew = document.getElementById('cancel-new');
+const submitBtn = document.getElementById('submit-btn');
 const err = document.getElementById('err');
-const prog = document.getElementById('prog');
-const fill = document.getElementById('fill');
+
+let pollTimer = null;
 
 function showErr(msg) { err.textContent = msg; err.classList.add('active'); }
 function clearErr() { err.classList.remove('active'); }
 
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
 function fmtTime(ts) {
   if (!ts) return '-';
   const d = new Date(ts * 1000);
@@ -185,141 +231,166 @@ function fmtTime(ts) {
        + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-async function loadHistory() {
+const STATUS_LABEL = {
+  running: '运行中', queued: '排队中', finished: '完成',
+  error: '出错', cancelled: '已终止', interrupted: '中断',
+};
+
+function renderTask(j) {
+  const label = STATUS_LABEL[j.status] || j.status;
+  const total = j.total || 0;
+  const pct = total ? Math.floor((j.done / total) * 100) : 0;
+
+  let metaBits = [];
+  if (j.queue_rank) metaBits.push(`队列 #${j.queue_rank}`);
+  metaBits.push(`<span class="filename">${escapeHtml(j.filename || '-')}</span>`);
+  metaBits.push(`总数 ${total}`);
+  metaBits.push(`线程 ${j.threads}`);
+  metaBits.push(`提交 ${fmtTime(j.created_at)}`);
+
+  let body = '';
+  if (j.status === 'running') {
+    body = `
+      <div class="task-body">
+        <div class="progress"><div style="width:${pct}%"></div></div>
+        <div class="stat"><b>${pct}%</b> (${j.done}/${total})</div>
+        <div class="stat">存活 <b class="alive-c">${j.alive}</b></div>
+        <div class="stat">失败 <b class="dead-c">${j.dead}</b></div>
+        ${j.cancelling ? '<div class="stat" style="color:#f59e0b;">终止中...</div>' : ''}
+      </div>`;
+  } else if (j.status === 'queued') {
+    body = `<div class="task-body">
+        <div class="stat">等待运行...</div>
+      </div>`;
+  } else {
+    body = `
+      <div class="task-body">
+        <div class="stat">存活 <b class="alive-c">${j.alive}</b></div>
+        <div class="stat">失败 <b class="dead-c">${j.dead}</b></div>
+        <div class="stat">完成 <b>${fmtTime(j.finished_at)}</b></div>
+      </div>`;
+  }
+
+  let actions = '<div class="actions">';
+  if (j.status === 'queued') {
+    actions += `<button class="a-up" data-act="up" data-id="${j.id}"
+                  ${j.queue_rank === 1 ? 'disabled' : ''}>↑ 提前</button>`;
+    actions += `<button class="a-cancel" data-act="cancel" data-id="${j.id}">终止</button>`;
+    actions += `<button class="a-del" data-act="del" data-id="${j.id}">删除</button>`;
+  } else if (j.status === 'running') {
+    actions += `<button class="a-cancel" data-act="cancel" data-id="${j.id}"
+                  ${j.cancelling ? 'disabled' : ''}>终止</button>`;
+  } else {
+    actions += `<a class="a-alive" href="/download/${j.id}/alive" download>下载 alive</a>`;
+    actions += `<a class="a-dead" href="/download/${j.id}/dead" download>下载 dead</a>`;
+    actions += `<button class="a-del" data-act="del" data-id="${j.id}">删除</button>`;
+  }
+  actions += '</div>';
+
+  const errBlock = j.error
+    ? `<div class="err-msg">错误: ${escapeHtml(j.error)}</div>` : '';
+
+  return `<div class="task ${j.status}">
+    <div class="task-top">
+      <div>
+        <div class="task-name">
+          <span class="badge b-${j.status}">${label}</span>
+          ${escapeHtml(j.name || '(未命名)')}
+        </div>
+        <div class="task-meta">${metaBits.join(' · ')}</div>
+      </div>
+    </div>
+    ${body}
+    ${errBlock}
+    ${actions}
+  </div>`;
+}
+
+async function loadList() {
   try {
     const r = await fetch('/jobs');
     const rows = await r.json();
-    const box = document.getElementById('history');
+    const box = document.getElementById('list');
     if (!rows.length) {
-      box.innerHTML = '<div class="empty">暂无任务</div>';
-      return;
+      box.innerHTML = '<div class="empty">暂无任务,点击右上角"新建任务"开始</div>';
+    } else {
+      box.innerHTML = rows.map(renderTask).join('');
+      box.querySelectorAll('button[data-act]').forEach(b => {
+        b.addEventListener('click', () => doAction(b.dataset.act, b.dataset.id));
+      });
     }
-    let html = '<table><thead><tr>'
-      + '<th>文件</th><th>状态</th><th>总数</th>'
-      + '<th>存活</th><th>失败</th><th>提交时间</th><th>操作</th>'
-      + '</tr></thead><tbody>';
-    for (const j of rows) {
-      const cls = 'b-' + j.status;
-      const label = {
-        running: '运行中', finished: '完成',
-        error: '出错', interrupted: '中断'
-      }[j.status] || j.status;
-      const canDl = j.status === 'finished' || j.status === 'error' || j.status === 'interrupted';
-      const canDel = j.status !== 'running';
-      html += `<tr>
-        <td class="filename" title="${escapeHtml(j.filename || '')}">${escapeHtml(j.filename || '-')}</td>
-        <td><span class="badge ${cls}">${label}</span></td>
-        <td>${j.total}</td>
-        <td class="alive-c">${j.alive}</td>
-        <td class="dead-c">${j.dead}</td>
-        <td>${fmtTime(j.created_at)}</td>
-        <td><div class="actions">
-          ${canDl ? `<a class="a-alive" href="/download/${j.id}/alive" download>alive</a>` : ''}
-          ${canDl ? `<a class="a-dead" href="/download/${j.id}/dead" download>dead</a>` : ''}
-          ${canDel ? `<button class="a-del" data-id="${j.id}">删除</button>` : ''}
-        </div></td>
-      </tr>`;
+    // Keep polling while anything is active.
+    const active = rows.some(j => j.status === 'running' || j.status === 'queued');
+    if (active) {
+      schedulePoll(800);
+    } else {
+      schedulePoll(null);
     }
-    html += '</tbody></table>';
-    box.innerHTML = html;
-    box.querySelectorAll('.a-del').forEach(b => {
-      b.addEventListener('click', () => deleteJob(b.dataset.id));
-    });
   } catch (e) {
-    document.getElementById('history').innerHTML =
+    document.getElementById('list').innerHTML =
       '<div class="empty">加载失败: ' + escapeHtml(e.message) + '</div>';
   }
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[c]));
+function schedulePoll(ms) {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  if (ms) pollTimer = setTimeout(loadList, ms);
 }
 
-async function deleteJob(id) {
-  if (!confirm('确认删除该任务及其结果文件？')) return;
+async function doAction(act, id) {
+  if (act === 'del' && !confirm('确认删除该任务及其结果文件?')) return;
+  if (act === 'cancel' && !confirm('确认终止该任务?')) return;
+
+  let url, method;
+  if (act === 'up')     { url = `/jobs/${id}/move_up`; method = 'POST'; }
+  if (act === 'cancel') { url = `/jobs/${id}/cancel`;  method = 'POST'; }
+  if (act === 'del')    { url = `/jobs/${id}`;         method = 'DELETE'; }
+
   try {
-    const r = await fetch('/jobs/' + id, { method: 'DELETE' });
+    const r = await fetch(url, { method });
     const data = await r.json();
-    if (!r.ok) { alert(data.error || '删除失败'); return; }
-    loadHistory();
+    if (!r.ok) { alert(data.error || '操作失败'); return; }
+    loadList();
   } catch (e) {
     alert('网络错误: ' + e.message);
   }
 }
 
+newBtn.addEventListener('click', () => {
+  formCard.classList.add('active');
+  document.getElementById('name').focus();
+});
+cancelNew.addEventListener('click', () => {
+  formCard.classList.remove('active');
+  form.reset();
+  clearErr();
+});
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   clearErr();
-  prog.classList.remove('active');
-  fill.style.width = '0%';
-
   const fd = new FormData(form);
-  btn.disabled = true;
-  btn.textContent = '上传中...';
-
+  submitBtn.disabled = true;
+  submitBtn.textContent = '上传中...';
   try {
     const r = await fetch('/upload', { method: 'POST', body: fd });
     const data = await r.json();
     if (!r.ok) {
       showErr(data.error || '上传失败');
-      btn.disabled = false;
-      btn.textContent = '开始探测';
-      return;
+    } else {
+      form.reset();
+      formCard.classList.remove('active');
+      loadList();
     }
-    btn.textContent = '探测中...';
-    document.getElementById('total').textContent = data.total;
-    document.getElementById('done').textContent = '0';
-    document.getElementById('alive').textContent = '0';
-    document.getElementById('dead').textContent = '0';
-    document.getElementById('pct').textContent = '0%';
-    prog.classList.add('active');
-    loadHistory();
-    pollStatus(data.job_id);
   } catch (e) {
     showErr('网络错误: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = '开始探测';
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = '加入队列';
   }
 });
 
-async function pollStatus(jobId) {
-  try {
-    const r = await fetch('/status/' + jobId);
-    const s = await r.json();
-    if (!r.ok) {
-      showErr(s.error || '获取状态失败');
-      btn.disabled = false;
-      btn.textContent = '开始探测';
-      return;
-    }
-
-    const total = s.total || 1;
-    const pct = Math.floor((s.done / total) * 100);
-    fill.style.width = pct + '%';
-    document.getElementById('pct').textContent = pct + '%';
-    document.getElementById('done').textContent = s.done;
-    document.getElementById('alive').textContent = s.alive;
-    document.getElementById('dead').textContent = s.dead;
-
-    if (s.status === 'finished' || s.status === 'error' || s.status === 'interrupted') {
-      btn.disabled = false;
-      btn.textContent = '开始探测';
-      if (s.status === 'error') showErr('任务出错: ' + (s.error || '未知错误'));
-      loadHistory();
-      return;
-    }
-    setTimeout(() => pollStatus(jobId), 800);
-  } catch (e) {
-    showErr('网络错误: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = '开始探测';
-  }
-}
-
-document.getElementById('refresh').addEventListener('click', loadHistory);
-loadHistory();
+loadList();
 </script>
 </body>
 </html>

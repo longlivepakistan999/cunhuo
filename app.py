@@ -30,10 +30,12 @@ HEADERS = {
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
-# In-memory live counters for currently running jobs.
-# Persistent metadata lives in SQLite; this dict only drives the progress bar.
+# Live counters + cancellation handle for the currently running job.
 live_jobs = {}
 live_lock = threading.Lock()
+
+# Wakes the queue worker when a new job is enqueued.
+worker_wakeup = threading.Event()
 
 
 def get_db():
@@ -47,6 +49,7 @@ def init_db():
         conn.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 id           TEXT PRIMARY KEY,
+                name         TEXT,
                 filename     TEXT,
                 total        INTEGER NOT NULL,
                 threads      INTEGER,
@@ -55,13 +58,33 @@ def init_db():
                 dead         INTEGER NOT NULL DEFAULT 0,
                 done         INTEGER NOT NULL DEFAULT 0,
                 error        TEXT,
+                input_path   TEXT,
                 alive_path   TEXT,
                 dead_path    TEXT,
+                position     INTEGER,
                 created_at   INTEGER NOT NULL,
+                started_at   INTEGER,
                 finished_at  INTEGER
             )
         """)
-        # Any job marked running on startup must have died with a previous process
+        existing = {
+            r["name"] for r in conn.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        for col, ddl in [
+            ("name", "TEXT"),
+            ("input_path", "TEXT"),
+            ("position", "INTEGER"),
+            ("started_at", "INTEGER"),
+        ]:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
+        # Backfill positions for legacy rows so ordering stays sane.
+        rows = conn.execute(
+            "SELECT id FROM jobs WHERE position IS NULL ORDER BY created_at ASC"
+        ).fetchall()
+        for i, r in enumerate(rows, start=1):
+            conn.execute("UPDATE jobs SET position=? WHERE id=?", (i, r["id"]))
+        # Anything still 'running' must belong to a dead process.
         conn.execute(
             "UPDATE jobs SET status='interrupted', finished_at=? "
             "WHERE status='running'",
@@ -81,10 +104,17 @@ def extract_title(html):
 
 def check_domain(domain, job_id, alive_writer, alive_fp,
                  dead_writer, dead_fp, file_lock):
+    with live_lock:
+        live = live_jobs.get(job_id)
+        if live and live["cancel_event"].is_set():
+            live["done"] += 1
+            return
+
     domain = domain.strip()
     if not domain:
         with live_lock:
-            live_jobs[job_id]["done"] += 1
+            if job_id in live_jobs:
+                live_jobs[job_id]["done"] += 1
         return
 
     if domain.startswith("http://"):
@@ -122,8 +152,9 @@ def check_domain(domain, job_id, alive_writer, alive_fp,
                 alive_writer.writerow(row)
                 alive_fp.flush()
             with live_lock:
-                live_jobs[job_id]["alive"] += 1
-                live_jobs[job_id]["done"] += 1
+                if job_id in live_jobs:
+                    live_jobs[job_id]["alive"] += 1
+                    live_jobs[job_id]["done"] += 1
             is_alive = True
             break
         except requests.exceptions.Timeout:
@@ -138,14 +169,49 @@ def check_domain(domain, job_id, alive_writer, alive_fp,
             dead_writer.writerow({"domain": domain, "reason": last_error})
             dead_fp.flush()
         with live_lock:
-            live_jobs[job_id]["dead"] += 1
-            live_jobs[job_id]["done"] += 1
+            if job_id in live_jobs:
+                live_jobs[job_id]["dead"] += 1
+                live_jobs[job_id]["done"] += 1
 
 
-def run_job(job_id, domains, threads, alive_path, dead_path):
+def run_job(job_id):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT total, threads, input_path, alive_path, dead_path "
+            "FROM jobs WHERE id=?", (job_id,),
+        ).fetchone()
+    if not row:
+        return
+
+    try:
+        with open(row["input_path"], "r", encoding="utf-8") as f:
+            domains = [line.strip() for line in f if line.strip()]
+    except OSError as e:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE jobs SET status='error', error=?, finished_at=? "
+                "WHERE id=?",
+                (f"读取输入文件失败: {e}", int(time.time()), job_id),
+            )
+            conn.commit()
+        return
+
+    cancel_event = threading.Event()
+    with live_lock:
+        live_jobs[job_id] = {
+            "total": row["total"],
+            "alive": 0, "dead": 0, "done": 0,
+            "cancel_event": cancel_event,
+        }
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE jobs SET status='running', started_at=? WHERE id=?",
+            (int(time.time()), job_id),
+        )
+        conn.commit()
+
     file_lock = threading.Lock()
-
-    alive_fp = open(alive_path, "w", encoding="utf-8-sig", newline="")
+    alive_fp = open(row["alive_path"], "w", encoding="utf-8-sig", newline="")
     alive_writer = csv.DictWriter(
         alive_fp,
         fieldnames=["url", "final_url", "status", "size", "title", "server"],
@@ -153,14 +219,14 @@ def run_job(job_id, domains, threads, alive_path, dead_path):
     alive_writer.writeheader()
     alive_fp.flush()
 
-    dead_fp = open(dead_path, "w", encoding="utf-8-sig", newline="")
+    dead_fp = open(row["dead_path"], "w", encoding="utf-8-sig", newline="")
     dead_writer = csv.DictWriter(dead_fp, fieldnames=["domain", "reason"])
     dead_writer.writeheader()
     dead_fp.flush()
 
     error_msg = None
     try:
-        with ThreadPoolExecutor(max_workers=threads) as executor:
+        with ThreadPoolExecutor(max_workers=row["threads"]) as executor:
             futures = [
                 executor.submit(
                     check_domain, d, job_id,
@@ -179,7 +245,15 @@ def run_job(job_id, domains, threads, alive_path, dead_path):
 
     with live_lock:
         snapshot = dict(live_jobs[job_id])
-    final_status = "error" if error_msg else "finished"
+        was_cancelled = cancel_event.is_set()
+
+    if was_cancelled:
+        final_status = "cancelled"
+    elif error_msg:
+        final_status = "error"
+    else:
+        final_status = "finished"
+
     with get_db() as conn:
         conn.execute(
             "UPDATE jobs SET status=?, alive=?, dead=?, done=?, "
@@ -191,8 +265,32 @@ def run_job(job_id, domains, threads, alive_path, dead_path):
             ),
         )
         conn.commit()
+
     with live_lock:
         live_jobs.pop(job_id, None)
+
+
+def queue_worker():
+    while True:
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT id FROM jobs WHERE status='queued' "
+                "ORDER BY position ASC, created_at ASC LIMIT 1"
+            ).fetchone()
+        if not row:
+            worker_wakeup.wait(timeout=30)
+            worker_wakeup.clear()
+            continue
+        try:
+            run_job(row["id"])
+        except Exception as e:
+            with get_db() as conn:
+                conn.execute(
+                    "UPDATE jobs SET status='error', error=?, finished_at=? "
+                    "WHERE id=?",
+                    (str(e), int(time.time()), row["id"]),
+                )
+                conn.commit()
 
 
 @app.route("/")
@@ -203,6 +301,7 @@ def index():
 @app.route("/upload", methods=["POST"])
 def upload():
     file = request.files.get("file")
+    name = (request.form.get("name") or "").strip()
     try:
         threads = int(request.form.get("threads", 30))
     except ValueError:
@@ -220,71 +319,135 @@ def upload():
     job_id = uuid.uuid4().hex
     job_dir = os.path.join(JOBS_DIR, job_id)
     os.makedirs(job_dir, exist_ok=True)
+    input_path = os.path.join(job_dir, "input.txt")
     alive_path = os.path.join(job_dir, "alive.csv")
     dead_path = os.path.join(job_dir, "dead.csv")
 
-    with live_lock:
-        live_jobs[job_id] = {
-            "total": len(domains),
-            "alive": 0, "dead": 0, "done": 0,
-        }
+    with open(input_path, "w", encoding="utf-8") as f:
+        for d in domains:
+            f.write(d + "\n")
+
+    if not name:
+        name = file.filename or job_id[:8]
 
     with get_db() as conn:
+        max_pos = conn.execute(
+            "SELECT COALESCE(MAX(position), 0) FROM jobs"
+        ).fetchone()[0]
         conn.execute(
-            "INSERT INTO jobs (id, filename, total, threads, status, "
-            "alive_path, dead_path, created_at) "
-            "VALUES (?, ?, ?, ?, 'running', ?, ?, ?)",
+            "INSERT INTO jobs (id, name, filename, total, threads, status, "
+            "input_path, alive_path, dead_path, position, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
             (
-                job_id, file.filename, len(domains), threads,
-                alive_path, dead_path, int(time.time()),
+                job_id, name, file.filename, len(domains), threads,
+                input_path, alive_path, dead_path,
+                max_pos + 1, int(time.time()),
             ),
         )
         conn.commit()
 
-    threading.Thread(
-        target=run_job,
-        args=(job_id, domains, threads, alive_path, dead_path),
-        daemon=True,
-    ).start()
-
-    return jsonify({"job_id": job_id, "total": len(domains), "threads": threads})
+    worker_wakeup.set()
+    return jsonify({"job_id": job_id, "total": len(domains), "name": name})
 
 
-@app.route("/status/<job_id>")
-def status(job_id):
-    if not JOB_ID_RE.match(job_id or ""):
-        return jsonify({"error": "非法 ID"}), 400
-
-    with live_lock:
-        live = live_jobs.get(job_id)
-        if live:
-            return jsonify({
-                "status": "running",
-                "total": live["total"],
-                "alive": live["alive"],
-                "dead": live["dead"],
-                "done": live["done"],
-                "error": None,
-            })
-
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT status, total, alive, dead, done, error "
-            "FROM jobs WHERE id=?", (job_id,),
-        ).fetchone()
-    if not row:
-        return jsonify({"error": "任务不存在"}), 404
-    return jsonify(dict(row))
+def _serialize_job(row):
+    d = dict(row)
+    live = live_jobs.get(d["id"])
+    if live:
+        d["alive"] = live["alive"]
+        d["dead"] = live["dead"]
+        d["done"] = live["done"]
+        d["cancelling"] = live["cancel_event"].is_set()
+    else:
+        d["cancelling"] = False
+    return d
 
 
 @app.route("/jobs")
 def jobs_list():
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, filename, total, threads, status, alive, dead, done, "
-            "error, created_at, finished_at FROM jobs ORDER BY created_at DESC"
+            "SELECT id, name, filename, total, threads, status, "
+            "alive, dead, done, error, position, "
+            "created_at, started_at, finished_at "
+            "FROM jobs "
+            "ORDER BY "
+            "  CASE status "
+            "    WHEN 'running' THEN 0 "
+            "    WHEN 'queued'  THEN 1 "
+            "    ELSE 2 END, "
+            "  position ASC, created_at DESC"
         ).fetchall()
-    return jsonify([dict(r) for r in rows])
+    with live_lock:
+        out = [_serialize_job(r) for r in rows]
+    # Add visible queue rank for queued tasks (1-based).
+    rank = 0
+    for j in out:
+        if j["status"] == "queued":
+            rank += 1
+            j["queue_rank"] = rank
+        else:
+            j["queue_rank"] = None
+    return jsonify(out)
+
+
+@app.route("/jobs/<job_id>/cancel", methods=["POST"])
+def cancel_job(job_id):
+    if not JOB_ID_RE.match(job_id or ""):
+        return jsonify({"error": "非法 ID"}), 400
+
+    with live_lock:
+        live = live_jobs.get(job_id)
+        if live:
+            live["cancel_event"].set()
+            return jsonify({"ok": True, "msg": "已请求终止,等待当前请求结束"})
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "任务不存在"}), 404
+        if row["status"] != "queued":
+            return jsonify({"error": "任务已结束,无法终止"}), 400
+        conn.execute(
+            "UPDATE jobs SET status='cancelled', finished_at=? WHERE id=?",
+            (int(time.time()), job_id),
+        )
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/jobs/<job_id>/move_up", methods=["POST"])
+def move_up(job_id):
+    if not JOB_ID_RE.match(job_id or ""):
+        return jsonify({"error": "非法 ID"}), 400
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT position, status FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({"error": "任务不存在"}), 404
+        if row["status"] != "queued":
+            return jsonify({"error": "只能调整等待中的任务"}), 400
+
+        prev = conn.execute(
+            "SELECT id, position FROM jobs WHERE status='queued' AND position<? "
+            "ORDER BY position DESC LIMIT 1",
+            (row["position"],),
+        ).fetchone()
+        if not prev:
+            return jsonify({"ok": True, "msg": "已在队首"})
+
+        # Swap positions via a temporary value to avoid UNIQUE collisions
+        # (no UNIQUE here, but safer pattern).
+        conn.execute("UPDATE jobs SET position=? WHERE id=?",
+                     (prev["position"], job_id))
+        conn.execute("UPDATE jobs SET position=? WHERE id=?",
+                     (row["position"], prev["id"]))
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/jobs/<job_id>", methods=["DELETE"])
@@ -294,7 +457,7 @@ def delete_job(job_id):
 
     with live_lock:
         if job_id in live_jobs:
-            return jsonify({"error": "任务正在运行,无法删除"}), 409
+            return jsonify({"error": "任务正在运行,请先终止"}), 409
 
     with get_db() as conn:
         row = conn.execute(
@@ -303,7 +466,7 @@ def delete_job(job_id):
         if not row:
             return jsonify({"error": "任务不存在"}), 404
         if row["status"] == "running":
-            return jsonify({"error": "任务正在运行,无法删除"}), 409
+            return jsonify({"error": "任务正在运行,请先终止"}), 409
         conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
         conn.commit()
 
@@ -323,17 +486,23 @@ def download(job_id, kind):
 
     with get_db() as conn:
         row = conn.execute(
-            "SELECT alive_path, dead_path FROM jobs WHERE id=?", (job_id,)
+            "SELECT name, alive_path, dead_path FROM jobs WHERE id=?", (job_id,)
         ).fetchone()
     if not row:
         abort(404)
     path = row["alive_path"] if kind == "alive" else row["dead_path"]
     if not path or not os.path.exists(path):
         abort(404)
-    return send_file(path, as_attachment=True, download_name=f"{kind}.csv")
+
+    safe_name = re.sub(r"[^\w\-.]+", "_", row["name"] or "result").strip("_") or "result"
+    return send_file(
+        path, as_attachment=True,
+        download_name=f"{safe_name}_{kind}.csv",
+    )
 
 
 init_db()
+threading.Thread(target=queue_worker, daemon=True).start()
 
 
 if __name__ == "__main__":

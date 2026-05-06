@@ -1,13 +1,16 @@
 import os
 import re
 import csv
+import time
 import uuid
+import shutil
+import sqlite3
 import threading
 import requests
 import urllib3
 from concurrent.futures import ThreadPoolExecutor
 from urllib3.exceptions import InsecureRequestWarning
-from flask import Flask, render_template, request, jsonify, send_from_directory, abort
+from flask import Flask, render_template, request, jsonify, send_file, abort
 
 urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -16,6 +19,7 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 JOBS_DIR = os.path.join(BASE_DIR, "jobs")
+DB_PATH = os.path.join(BASE_DIR, "jobs.db")
 os.makedirs(JOBS_DIR, exist_ok=True)
 
 HEADERS = {
@@ -24,9 +28,46 @@ HEADERS = {
                   "Chrome/120.0 Safari/537.36"
 }
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
-jobs = {}
-jobs_lock = threading.Lock()
+# In-memory live counters for currently running jobs.
+# Persistent metadata lives in SQLite; this dict only drives the progress bar.
+live_jobs = {}
+live_lock = threading.Lock()
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id           TEXT PRIMARY KEY,
+                filename     TEXT,
+                total        INTEGER NOT NULL,
+                threads      INTEGER,
+                status       TEXT NOT NULL,
+                alive        INTEGER NOT NULL DEFAULT 0,
+                dead         INTEGER NOT NULL DEFAULT 0,
+                done         INTEGER NOT NULL DEFAULT 0,
+                error        TEXT,
+                alive_path   TEXT,
+                dead_path    TEXT,
+                created_at   INTEGER NOT NULL,
+                finished_at  INTEGER
+            )
+        """)
+        # Any job marked running on startup must have died with a previous process
+        conn.execute(
+            "UPDATE jobs SET status='interrupted', finished_at=? "
+            "WHERE status='running'",
+            (int(time.time()),),
+        )
+        conn.commit()
 
 
 def extract_title(html):
@@ -35,15 +76,15 @@ def extract_title(html):
     m = TITLE_RE.search(html)
     if not m:
         return ""
-    title = re.sub(r"\s+", " ", m.group(1).strip())
-    return title[:200]
+    return re.sub(r"\s+", " ", m.group(1).strip())[:200]
 
 
-def check_domain(domain, job, alive_writer, alive_fp, dead_writer, dead_fp, file_lock):
+def check_domain(domain, job_id, alive_writer, alive_fp,
+                 dead_writer, dead_fp, file_lock):
     domain = domain.strip()
     if not domain:
-        with jobs_lock:
-            job["done"] += 1
+        with live_lock:
+            live_jobs[job_id]["done"] += 1
         return
 
     if domain.startswith("http://"):
@@ -80,9 +121,9 @@ def check_domain(domain, job, alive_writer, alive_fp, dead_writer, dead_fp, file
             with file_lock:
                 alive_writer.writerow(row)
                 alive_fp.flush()
-            with jobs_lock:
-                job["alive"] += 1
-                job["done"] += 1
+            with live_lock:
+                live_jobs[job_id]["alive"] += 1
+                live_jobs[job_id]["done"] += 1
             is_alive = True
             break
         except requests.exceptions.Timeout:
@@ -96,18 +137,13 @@ def check_domain(domain, job, alive_writer, alive_fp, dead_writer, dead_fp, file
         with file_lock:
             dead_writer.writerow({"domain": domain, "reason": last_error})
             dead_fp.flush()
-        with jobs_lock:
-            job["dead"] += 1
-            job["done"] += 1
+        with live_lock:
+            live_jobs[job_id]["dead"] += 1
+            live_jobs[job_id]["done"] += 1
 
 
-def run_job(job_id, domains, threads):
-    job_dir = os.path.join(JOBS_DIR, job_id)
-    alive_path = os.path.join(job_dir, "alive.csv")
-    dead_path = os.path.join(job_dir, "dead.csv")
-
+def run_job(job_id, domains, threads, alive_path, dead_path):
     file_lock = threading.Lock()
-    job = jobs[job_id]
 
     alive_fp = open(alive_path, "w", encoding="utf-8-sig", newline="")
     alive_writer = csv.DictWriter(
@@ -122,11 +158,12 @@ def run_job(job_id, domains, threads):
     dead_writer.writeheader()
     dead_fp.flush()
 
+    error_msg = None
     try:
         with ThreadPoolExecutor(max_workers=threads) as executor:
             futures = [
                 executor.submit(
-                    check_domain, d, job,
+                    check_domain, d, job_id,
                     alive_writer, alive_fp,
                     dead_writer, dead_fp, file_lock,
                 )
@@ -134,15 +171,28 @@ def run_job(job_id, domains, threads):
             ]
             for f in futures:
                 f.result()
-        with jobs_lock:
-            job["status"] = "finished"
     except Exception as e:
-        with jobs_lock:
-            job["status"] = "error"
-            job["error"] = str(e)
+        error_msg = str(e)
     finally:
         alive_fp.close()
         dead_fp.close()
+
+    with live_lock:
+        snapshot = dict(live_jobs[job_id])
+    final_status = "error" if error_msg else "finished"
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE jobs SET status=?, alive=?, dead=?, done=?, "
+            "error=?, finished_at=? WHERE id=?",
+            (
+                final_status,
+                snapshot["alive"], snapshot["dead"], snapshot["done"],
+                error_msg, int(time.time()), job_id,
+            ),
+        )
+        conn.commit()
+    with live_lock:
+        live_jobs.pop(job_id, None)
 
 
 @app.route("/")
@@ -170,46 +220,120 @@ def upload():
     job_id = uuid.uuid4().hex
     job_dir = os.path.join(JOBS_DIR, job_id)
     os.makedirs(job_dir, exist_ok=True)
+    alive_path = os.path.join(job_dir, "alive.csv")
+    dead_path = os.path.join(job_dir, "dead.csv")
 
-    with jobs_lock:
-        jobs[job_id] = {
-            "status": "running",
+    with live_lock:
+        live_jobs[job_id] = {
             "total": len(domains),
-            "alive": 0,
-            "dead": 0,
-            "done": 0,
-            "error": None,
+            "alive": 0, "dead": 0, "done": 0,
         }
 
-    t = threading.Thread(
-        target=run_job, args=(job_id, domains, threads), daemon=True
-    )
-    t.start()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO jobs (id, filename, total, threads, status, "
+            "alive_path, dead_path, created_at) "
+            "VALUES (?, ?, ?, ?, 'running', ?, ?, ?)",
+            (
+                job_id, file.filename, len(domains), threads,
+                alive_path, dead_path, int(time.time()),
+            ),
+        )
+        conn.commit()
+
+    threading.Thread(
+        target=run_job,
+        args=(job_id, domains, threads, alive_path, dead_path),
+        daemon=True,
+    ).start()
 
     return jsonify({"job_id": job_id, "total": len(domains), "threads": threads})
 
 
 @app.route("/status/<job_id>")
 def status(job_id):
-    with jobs_lock:
-        job = jobs.get(job_id)
-        if not job:
+    if not JOB_ID_RE.match(job_id or ""):
+        return jsonify({"error": "非法 ID"}), 400
+
+    with live_lock:
+        live = live_jobs.get(job_id)
+        if live:
+            return jsonify({
+                "status": "running",
+                "total": live["total"],
+                "alive": live["alive"],
+                "dead": live["dead"],
+                "done": live["done"],
+                "error": None,
+            })
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, total, alive, dead, done, error "
+            "FROM jobs WHERE id=?", (job_id,),
+        ).fetchone()
+    if not row:
+        return jsonify({"error": "任务不存在"}), 404
+    return jsonify(dict(row))
+
+
+@app.route("/jobs")
+def jobs_list():
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, filename, total, threads, status, alive, dead, done, "
+            "error, created_at, finished_at FROM jobs ORDER BY created_at DESC"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/jobs/<job_id>", methods=["DELETE"])
+def delete_job(job_id):
+    if not JOB_ID_RE.match(job_id or ""):
+        return jsonify({"error": "非法 ID"}), 400
+
+    with live_lock:
+        if job_id in live_jobs:
+            return jsonify({"error": "任务正在运行,无法删除"}), 409
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        if not row:
             return jsonify({"error": "任务不存在"}), 404
-        return jsonify(dict(job))
+        if row["status"] == "running":
+            return jsonify({"error": "任务正在运行,无法删除"}), 409
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        conn.commit()
+
+    job_dir = os.path.join(JOBS_DIR, job_id)
+    if os.path.isdir(job_dir):
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+    return jsonify({"ok": True})
 
 
 @app.route("/download/<job_id>/<kind>")
 def download(job_id, kind):
     if kind not in ("alive", "dead"):
         abort(404)
-    if not re.fullmatch(r"[a-f0-9]{32}", job_id or ""):
+    if not JOB_ID_RE.match(job_id or ""):
         abort(404)
-    job_dir = os.path.join(JOBS_DIR, job_id)
-    filename = f"{kind}.csv"
-    path = os.path.join(job_dir, filename)
-    if not os.path.exists(path):
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT alive_path, dead_path FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+    if not row:
         abort(404)
-    return send_from_directory(job_dir, filename, as_attachment=True)
+    path = row["alive_path"] if kind == "alive" else row["dead_path"]
+    if not path or not os.path.exists(path):
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=f"{kind}.csv")
+
+
+init_db()
 
 
 if __name__ == "__main__":

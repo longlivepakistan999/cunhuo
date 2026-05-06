@@ -13,21 +13,19 @@
       color: #e2e8f0;
       margin: 0;
       min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 24px;
+      padding: 32px 16px;
     }
+    .wrap { max-width: 920px; margin: 0 auto; }
     .card {
       background: #1e293b;
       border-radius: 12px;
-      padding: 32px;
-      width: 100%;
-      max-width: 560px;
+      padding: 28px;
       box-shadow: 0 20px 50px rgba(0,0,0,.4);
+      margin-bottom: 24px;
     }
     h1 { margin: 0 0 4px; font-size: 22px; }
-    .sub { color: #94a3b8; font-size: 13px; margin-bottom: 24px; }
+    h2 { margin: 0 0 16px; font-size: 16px; color: #cbd5e1; }
+    .sub { color: #94a3b8; font-size: 13px; margin-bottom: 20px; }
     label { display: block; font-size: 13px; color: #cbd5e1; margin-bottom: 6px; }
     input[type=file], input[type=number] {
       width: 100%;
@@ -41,23 +39,22 @@
     .row { display: flex; gap: 12px; margin-bottom: 16px; }
     .row > div { flex: 1; }
     button {
-      width: 100%;
-      padding: 12px;
+      padding: 10px 16px;
       background: #2563eb;
       color: #fff;
       border: none;
       border-radius: 8px;
-      font-size: 15px;
+      font-size: 14px;
       cursor: pointer;
       font-weight: 500;
     }
+    button.full { width: 100%; padding: 12px; font-size: 15px; }
     button:hover:not(:disabled) { background: #1d4ed8; }
     button:disabled { background: #475569; cursor: not-allowed; }
     .progress-wrap { margin-top: 24px; display: none; }
     .progress-wrap.active { display: block; }
     .bar {
-      width: 100%;
-      height: 12px;
+      width: 100%; height: 12px;
       background: #0f172a;
       border-radius: 6px;
       overflow: hidden;
@@ -79,21 +76,6 @@
     .stats b { color: #e2e8f0; font-weight: 600; }
     .alive-c { color: #4ade80; }
     .dead-c { color: #f87171; }
-    .downloads { margin-top: 20px; display: none; gap: 12px; }
-    .downloads.active { display: flex; }
-    .downloads a {
-      flex: 1;
-      text-align: center;
-      padding: 10px;
-      border-radius: 8px;
-      text-decoration: none;
-      font-size: 14px;
-      font-weight: 500;
-    }
-    .dl-alive { background: #166534; color: #dcfce7; }
-    .dl-dead { background: #7f1d1d; color: #fee2e2; }
-    .dl-alive:hover { background: #15803d; }
-    .dl-dead:hover { background: #991b1b; }
     .err {
       margin-top: 14px;
       padding: 10px 12px;
@@ -104,9 +86,48 @@
       display: none;
     }
     .err.active { display: block; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      padding: 10px 8px;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+      vertical-align: middle;
+    }
+    th { color: #94a3b8; font-weight: 500; font-size: 12px; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .b-running { background: #1e40af; color: #dbeafe; }
+    .b-finished { background: #166534; color: #dcfce7; }
+    .b-error { background: #7f1d1d; color: #fee2e2; }
+    .b-interrupted { background: #78350f; color: #fef3c7; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .actions a, .actions button {
+      padding: 4px 10px;
+      font-size: 12px;
+      border-radius: 4px;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+    }
+    .a-alive { background: #166534; color: #dcfce7; }
+    .a-dead { background: #7f1d1d; color: #fee2e2; }
+    .a-del { background: #475569; color: #e2e8f0; }
+    .a-del:hover { background: #ef4444; }
+    .empty { color: #64748b; text-align: center; padding: 24px; font-size: 13px; }
+    .filename { color: #cbd5e1; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .head-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .refresh { background: #334155; color: #cbd5e1; padding: 6px 12px; font-size: 12px; }
+    .refresh:hover:not(:disabled) { background: #475569; }
   </style>
 </head>
 <body>
+<div class="wrap">
+
   <div class="card">
     <h1>资产存活探测</h1>
     <div class="sub">上传一个 txt 文件（每行一个域名/URL），后台跑完后下载结果。</div>
@@ -117,14 +138,12 @@
           <label>域名文件 (.txt)</label>
           <input type="file" id="file" name="file" accept=".txt,text/plain" required>
         </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>线程数 (1-200)</label>
+        <div style="max-width: 160px;">
+          <label>线程数</label>
           <input type="number" id="threads" name="threads" value="30" min="1" max="200">
         </div>
       </div>
-      <button type="submit" id="btn">开始探测</button>
+      <button type="submit" id="btn" class="full">开始探测</button>
     </form>
 
     <div class="err" id="err"></div>
@@ -135,12 +154,18 @@
         <span>进度 <b id="pct">0%</b> (<span id="done">0</span>/<span id="total">0</span>)</span>
         <span>存活 <b class="alive-c" id="alive">0</b> · 失败 <b class="dead-c" id="dead">0</b></span>
       </div>
-      <div class="downloads" id="dl">
-        <a class="dl-alive" id="dl-alive" href="#" download>下载 alive.csv</a>
-        <a class="dl-dead" id="dl-dead" href="#" download>下载 dead.csv</a>
-      </div>
     </div>
   </div>
+
+  <div class="card">
+    <div class="head-row">
+      <h2 style="margin:0;">历史任务</h2>
+      <button class="refresh" id="refresh" type="button">刷新</button>
+    </div>
+    <div id="history"></div>
+  </div>
+
+</div>
 
 <script>
 const form = document.getElementById('f');
@@ -148,21 +173,87 @@ const btn = document.getElementById('btn');
 const err = document.getElementById('err');
 const prog = document.getElementById('prog');
 const fill = document.getElementById('fill');
-const dl = document.getElementById('dl');
 
-function showErr(msg) {
-  err.textContent = msg;
-  err.classList.add('active');
+function showErr(msg) { err.textContent = msg; err.classList.add('active'); }
+function clearErr() { err.classList.remove('active'); }
+
+function fmtTime(ts) {
+  if (!ts) return '-';
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} `
+       + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
-function clearErr() {
-  err.classList.remove('active');
+
+async function loadHistory() {
+  try {
+    const r = await fetch('/jobs');
+    const rows = await r.json();
+    const box = document.getElementById('history');
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty">暂无任务</div>';
+      return;
+    }
+    let html = '<table><thead><tr>'
+      + '<th>文件</th><th>状态</th><th>总数</th>'
+      + '<th>存活</th><th>失败</th><th>提交时间</th><th>操作</th>'
+      + '</tr></thead><tbody>';
+    for (const j of rows) {
+      const cls = 'b-' + j.status;
+      const label = {
+        running: '运行中', finished: '完成',
+        error: '出错', interrupted: '中断'
+      }[j.status] || j.status;
+      const canDl = j.status === 'finished' || j.status === 'error' || j.status === 'interrupted';
+      const canDel = j.status !== 'running';
+      html += `<tr>
+        <td class="filename" title="${escapeHtml(j.filename || '')}">${escapeHtml(j.filename || '-')}</td>
+        <td><span class="badge ${cls}">${label}</span></td>
+        <td>${j.total}</td>
+        <td class="alive-c">${j.alive}</td>
+        <td class="dead-c">${j.dead}</td>
+        <td>${fmtTime(j.created_at)}</td>
+        <td><div class="actions">
+          ${canDl ? `<a class="a-alive" href="/download/${j.id}/alive" download>alive</a>` : ''}
+          ${canDl ? `<a class="a-dead" href="/download/${j.id}/dead" download>dead</a>` : ''}
+          ${canDel ? `<button class="a-del" data-id="${j.id}">删除</button>` : ''}
+        </div></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    box.innerHTML = html;
+    box.querySelectorAll('.a-del').forEach(b => {
+      b.addEventListener('click', () => deleteJob(b.dataset.id));
+    });
+  } catch (e) {
+    document.getElementById('history').innerHTML =
+      '<div class="empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+
+async function deleteJob(id) {
+  if (!confirm('确认删除该任务及其结果文件？')) return;
+  try {
+    const r = await fetch('/jobs/' + id, { method: 'DELETE' });
+    const data = await r.json();
+    if (!r.ok) { alert(data.error || '删除失败'); return; }
+    loadHistory();
+  } catch (e) {
+    alert('网络错误: ' + e.message);
+  }
 }
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   clearErr();
-  dl.classList.remove('active');
   prog.classList.remove('active');
+  fill.style.width = '0%';
 
   const fd = new FormData(form);
   btn.disabled = true;
@@ -179,7 +270,12 @@ form.addEventListener('submit', async (e) => {
     }
     btn.textContent = '探测中...';
     document.getElementById('total').textContent = data.total;
+    document.getElementById('done').textContent = '0';
+    document.getElementById('alive').textContent = '0';
+    document.getElementById('dead').textContent = '0';
+    document.getElementById('pct').textContent = '0%';
     prog.classList.add('active');
+    loadHistory();
     pollStatus(data.job_id);
   } catch (e) {
     showErr('网络错误: ' + e.message);
@@ -207,18 +303,11 @@ async function pollStatus(jobId) {
     document.getElementById('alive').textContent = s.alive;
     document.getElementById('dead').textContent = s.dead;
 
-    if (s.status === 'finished') {
-      document.getElementById('dl-alive').href = '/download/' + jobId + '/alive';
-      document.getElementById('dl-dead').href = '/download/' + jobId + '/dead';
-      dl.classList.add('active');
+    if (s.status === 'finished' || s.status === 'error' || s.status === 'interrupted') {
       btn.disabled = false;
       btn.textContent = '开始探测';
-      return;
-    }
-    if (s.status === 'error') {
-      showErr('任务出错: ' + (s.error || '未知错误'));
-      btn.disabled = false;
-      btn.textContent = '开始探测';
+      if (s.status === 'error') showErr('任务出错: ' + (s.error || '未知错误'));
+      loadHistory();
       return;
     }
     setTimeout(() => pollStatus(jobId), 800);
@@ -228,6 +317,9 @@ async function pollStatus(jobId) {
     btn.textContent = '开始探测';
   }
 }
+
+document.getElementById('refresh').addEventListener('click', loadHistory);
+loadHistory();
 </script>
 </body>
 </html>

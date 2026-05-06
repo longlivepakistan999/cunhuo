@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 jobs/
+jobs.db
+jobs.db-journal
+jobs.db-wal
+jobs.db-shm
 .venv/
 venv/
 *.csv

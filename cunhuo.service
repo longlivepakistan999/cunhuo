@@ -1,0 +1,28 @@
+[Unit]
+Description=Cunhuo - Asset Survival Detection Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 改成你实际的目录和用户
+WorkingDirectory=/opt/cunhuo
+ExecStart=/opt/cunhuo/start.sh
+User=root
+Group=root
+
+# 崩了自动拉起
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=10
+StartLimitIntervalSec=60
+
+# 优雅停止：留 30s 给当前任务把 CSV flush
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

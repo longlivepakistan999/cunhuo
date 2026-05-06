@@ -6,8 +6,10 @@ import uuid
 import shutil
 import sqlite3
 import threading
+import traceback
 import requests
 import urllib3
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from urllib3.exceptions import InsecureRequestWarning
 from flask import Flask, render_template, request, jsonify, send_file, abort
@@ -38,10 +40,16 @@ live_lock = threading.Lock()
 worker_wakeup = threading.Event()
 
 
+@contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    # `with conn:` only manages transactions; we wrap with @contextmanager
+    # so the connection is actually closed on exit and we don't leak fds.
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -203,12 +211,21 @@ def run_job(job_id):
             "alive": 0, "dead": 0, "done": 0,
             "cancel_event": cancel_event,
         }
+    # Conditional UPDATE: if a /cancel arrived during our setup above and
+    # already flipped status to 'cancelled', leave it alone and bail out.
+    # Without this WHERE clause the worker would silently overwrite the
+    # user's cancel.
     with get_db() as conn:
-        conn.execute(
-            "UPDATE jobs SET status='running', started_at=? WHERE id=?",
+        cur = conn.execute(
+            "UPDATE jobs SET status='running', started_at=? "
+            "WHERE id=? AND status='queued'",
             (int(time.time()), job_id),
         )
         conn.commit()
+        if cur.rowcount == 0:
+            with live_lock:
+                live_jobs.pop(job_id, None)
+            return
 
     file_lock = threading.Lock()
     alive_fp = open(row["alive_path"], "w", encoding="utf-8-sig", newline="")
@@ -271,26 +288,32 @@ def run_job(job_id):
 
 
 def queue_worker():
+    # Outer try keeps the daemon thread alive forever; without it any
+    # unexpected DB error would silently kill the queue.
     while True:
-        with get_db() as conn:
-            row = conn.execute(
-                "SELECT id FROM jobs WHERE status='queued' "
-                "ORDER BY position ASC, created_at ASC LIMIT 1"
-            ).fetchone()
-        if not row:
-            worker_wakeup.wait(timeout=30)
-            worker_wakeup.clear()
-            continue
         try:
-            run_job(row["id"])
-        except Exception as e:
             with get_db() as conn:
-                conn.execute(
-                    "UPDATE jobs SET status='error', error=?, finished_at=? "
-                    "WHERE id=?",
-                    (str(e), int(time.time()), row["id"]),
-                )
-                conn.commit()
+                row = conn.execute(
+                    "SELECT id FROM jobs WHERE status='queued' "
+                    "ORDER BY position ASC, created_at ASC LIMIT 1"
+                ).fetchone()
+            if not row:
+                worker_wakeup.wait(timeout=30)
+                worker_wakeup.clear()
+                continue
+            try:
+                run_job(row["id"])
+            except Exception as e:
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE jobs SET status='error', error=?, finished_at=? "
+                        "WHERE id=?",
+                        (str(e), int(time.time()), row["id"]),
+                    )
+                    conn.commit()
+        except Exception:
+            traceback.print_exc()
+            time.sleep(5)
 
 
 @app.route("/")
@@ -376,7 +399,8 @@ def jobs_list():
             "    WHEN 'running' THEN 0 "
             "    WHEN 'queued'  THEN 1 "
             "    ELSE 2 END, "
-            "  position ASC, created_at DESC"
+            "  CASE WHEN status = 'queued' THEN position END ASC, "
+            "  created_at DESC"
         ).fetchall()
     with live_lock:
         out = [_serialize_job(r) for r in rows]
@@ -410,11 +434,23 @@ def cancel_job(job_id):
             return jsonify({"error": "任务不存在"}), 404
         if row["status"] != "queued":
             return jsonify({"error": "任务已结束,无法终止"}), 400
-        conn.execute(
-            "UPDATE jobs SET status='cancelled', finished_at=? WHERE id=?",
+        # Conditional UPDATE: if the worker raced us and already moved this
+        # job to 'running', rowcount==0 and we fall through to set the
+        # in-memory cancel flag instead. Otherwise run_job would later
+        # overwrite our 'cancelled' status with finished/error.
+        cur = conn.execute(
+            "UPDATE jobs SET status='cancelled', finished_at=? "
+            "WHERE id=? AND status='queued'",
             (int(time.time()), job_id),
         )
         conn.commit()
+        if cur.rowcount == 0:
+            with live_lock:
+                live = live_jobs.get(job_id)
+                if live:
+                    live["cancel_event"].set()
+                    return jsonify({"ok": True, "msg": "任务已开始,正在终止"})
+            return jsonify({"error": "任务状态已变更,请刷新"}), 409
     return jsonify({"ok": True})
 
 

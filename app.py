@@ -4,6 +4,8 @@ import csv
 import time
 import uuid
 import shutil
+import base64
+import secrets
 import sqlite3
 import threading
 import traceback
@@ -12,7 +14,7 @@ import urllib3
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from urllib3.exceptions import InsecureRequestWarning
-from flask import Flask, render_template, request, jsonify, send_file, abort
+from flask import Flask, render_template, request, jsonify, send_file, abort, Response
 
 urllib3.disable_warnings(InsecureRequestWarning)
 
@@ -31,6 +33,14 @@ HEADERS = {
 }
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+
+# Basic Auth: only enforced when both env vars are set. Leave one empty
+# to disable auth (useful for local dev or when fronting with another
+# auth layer like nginx).
+AUTH_USER = os.environ.get("CUNHUO_USER", "")
+AUTH_PASS = os.environ.get("CUNHUO_PASS", "")
+AUTH_REQUIRED = bool(AUTH_USER and AUTH_PASS)
+AUTH_REALM = "cunhuo"
 
 # Live counters + cancellation handle for the currently running job.
 live_jobs = {}
@@ -314,6 +324,36 @@ def queue_worker():
         except Exception:
             traceback.print_exc()
             time.sleep(5)
+
+
+def _check_basic_auth(header):
+    if not header or not header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+    except Exception:
+        return False
+    if ":" not in decoded:
+        return False
+    user, pwd = decoded.split(":", 1)
+    # compare_digest is constant-time to thwart timing attacks
+    return (
+        secrets.compare_digest(user, AUTH_USER)
+        and secrets.compare_digest(pwd, AUTH_PASS)
+    )
+
+
+@app.before_request
+def _enforce_auth():
+    if not AUTH_REQUIRED:
+        return None
+    if _check_basic_auth(request.headers.get("Authorization", "")):
+        return None
+    return Response(
+        "Authentication required\n",
+        status=401,
+        headers={"WWW-Authenticate": f'Basic realm="{AUTH_REALM}"'},
+    )
 
 
 @app.route("/")

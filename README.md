@@ -81,6 +81,30 @@ sudo systemctl stop cunhuo      # 停止
 
 ---
 
+## 访问鉴权 (Basic Auth)
+
+设置两个环境变量即可启用，**任一为空都视为关闭**：
+
+```bash
+export CUNHUO_USER=admin
+export CUNHUO_PASS=改成你的强密码
+./start.sh
+```
+
+设了之后访问任何页面（包括 `/jobs`、`/upload`、`/download` 等所有接口）浏览器都会先弹账号密码框。验证通过后浏览器会自动缓存 credentials，整个会话不用再输。
+
+systemd 部署在 `cunhuo.service` 里加：
+```ini
+Environment=CUNHUO_USER=admin
+Environment=CUNHUO_PASS=改成你的强密码
+```
+
+宝塔部署去 Python 项目管理器 → 项目 → 「环境变量」加同名两个变量，重启项目生效。
+
+⚠️ Basic Auth 是**明文传输**（base64 不算加密）。**只有上 HTTPS 才安全**，纯 HTTP 下账号密码任何人抓包都能看到。生产环境务必配证书。
+
+---
+
 ## 重要：worker 必须为 1
 
 `start.sh` 里写死了 `gunicorn -w 1`。**别改成多 worker**。

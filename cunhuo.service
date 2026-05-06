@@ -14,6 +14,11 @@ ExecStart=/opt/cunhuo/start.sh
 User=root
 Group=root
 
+# Basic Auth 账号密码 (两个都设才会启用,任一为空则不鉴权)
+# 改成你自己的强密码
+Environment=CUNHUO_USER=admin
+Environment=CUNHUO_PASS=change-this-password
+
 # 崩了自动拉起
 Restart=on-failure
 RestartSec=3

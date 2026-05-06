@@ -306,10 +306,14 @@ function renderTask(j) {
   </div>`;
 }
 
+let pollFailures = 0;
+
 async function loadList() {
   try {
     const r = await fetch('/jobs');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const rows = await r.json();
+    pollFailures = 0;
     const box = document.getElementById('list');
     if (!rows.length) {
       box.innerHTML = '<div class="empty">暂无任务,点击右上角"新建任务"开始</div>';
@@ -319,16 +323,16 @@ async function loadList() {
         b.addEventListener('click', () => doAction(b.dataset.act, b.dataset.id));
       });
     }
-    // Keep polling while anything is active.
     const active = rows.some(j => j.status === 'running' || j.status === 'queued');
-    if (active) {
-      schedulePoll(800);
-    } else {
-      schedulePoll(null);
-    }
+    schedulePoll(active ? 800 : null);
   } catch (e) {
-    document.getElementById('list').innerHTML =
-      '<div class="empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+    // Don't blow away the existing list on transient failures - just retry
+    // with backoff. Without this any single network hiccup permanently
+    // freezes the progress bar.
+    pollFailures++;
+    const delay = Math.min(30000, 1000 * Math.pow(2, pollFailures));
+    console.warn('loadList failed, retrying in', delay, 'ms:', e.message);
+    schedulePoll(delay);
   }
 }
 

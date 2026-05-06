@@ -334,7 +334,10 @@ def upload():
     if not file or file.filename == "":
         return jsonify({"error": "未选择文件"}), 400
 
-    content = file.read().decode("utf-8", errors="ignore")
+    # utf-8-sig strips a leading BOM if Notepad-style files include one;
+    # otherwise the first domain ends up prefixed with U+FEFF and never
+    # resolves.
+    content = file.read().decode("utf-8-sig", errors="ignore")
     domains = [line.strip() for line in content.splitlines() if line.strip()]
     if not domains:
         return jsonify({"error": "文件为空"}), 400
@@ -353,7 +356,11 @@ def upload():
     if not name:
         name = file.filename or job_id[:8]
 
+    # BEGIN IMMEDIATE acquires the write lock up front so two concurrent
+    # uploads can't both read the same MAX(position) and end up with
+    # duplicate queue positions.
     with get_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         max_pos = conn.execute(
             "SELECT COALESCE(MAX(position), 0) FROM jobs"
         ).fetchone()[0]

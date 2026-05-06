@@ -390,6 +390,13 @@ def _serialize_job(row):
         d["cancelling"] = live["cancel_event"].is_set()
     else:
         d["cancelling"] = False
+    # Tell the frontend whether download buttons are worth showing.
+    # A queued task that was cancelled never opened the CSV files.
+    d["has_csv"] = bool(
+        d.get("alive_path") and os.path.exists(d["alive_path"])
+    )
+    # Don't leak server filesystem paths to the browser.
+    d.pop("alive_path", None)
     return d
 
 
@@ -398,7 +405,7 @@ def jobs_list():
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, filename, total, threads, status, "
-            "alive, dead, done, error, position, "
+            "alive, dead, done, error, position, alive_path, "
             "created_at, started_at, finished_at "
             "FROM jobs "
             "ORDER BY "

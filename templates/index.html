@@ -281,8 +281,10 @@ function renderTask(j) {
     actions += `<button class="a-cancel" data-act="cancel" data-id="${j.id}"
                   ${j.cancelling ? 'disabled' : ''}>终止</button>`;
   } else {
-    actions += `<a class="a-alive" href="/download/${j.id}/alive" download>下载 alive</a>`;
-    actions += `<a class="a-dead" href="/download/${j.id}/dead" download>下载 dead</a>`;
+    if (j.has_csv) {
+      actions += `<a class="a-alive" href="/download/${j.id}/alive" download>下载 alive</a>`;
+      actions += `<a class="a-dead" href="/download/${j.id}/dead" download>下载 dead</a>`;
+    }
     actions += `<button class="a-del" data-act="del" data-id="${j.id}">删除</button>`;
   }
   actions += '</div>';
@@ -378,10 +380,22 @@ form.addEventListener('submit', async (e) => {
   submitBtn.textContent = '上传中...';
   try {
     const r = await fetch('/upload', { method: 'POST', body: fd });
-    const data = await r.json();
     if (!r.ok) {
-      showErr(data.error || '上传失败');
+      // 413 etc. return HTML, not JSON, so json() can throw - try gracefully.
+      let msg;
+      if (r.status === 413) {
+        msg = '文件过大,超过 32MB 限制';
+      } else {
+        try {
+          const data = await r.json();
+          msg = data.error || `上传失败 (${r.status})`;
+        } catch {
+          msg = `上传失败 (${r.status})`;
+        }
+      }
+      showErr(msg);
     } else {
+      const data = await r.json();
       form.reset();
       formCard.classList.remove('active');
       loadList();
